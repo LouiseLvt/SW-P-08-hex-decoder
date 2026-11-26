@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SW-P-08 Hex Decoder</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Literata:opsz,wght@7..72,400;7..72,600&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+/* VOICE: precise, instrument-like, calm — a lab tool for broadcast engineers
+   IDEA: a logic-analyser printout: the wire bytes laid out as a ribbon, each run labelled
+   PICTURE: the live decoder itself, ribbon of colour-coded byte cells under the input
+   COLOUR and TYPE: white / ink, carmine for command + errors, prussian for message fields; Literata + Plex Mono for bytes
+   LAYOUT: modest title, input, ribbon + field table per frame, command reference below */
+:root{color-scheme:light dark;
+--bg:light-dark(#ffffff,#0f1217);--ink:light-dark(#10131a,#e7e9ee);--mute:light-dark(#5b6170,#9aa1b0);
+--line:light-dark(#dde1e8,#262c36);--panel:light-dark(#f5f7fa,#161a21);
+--car:light-dark(#c1121f,#ff5a63);--carbg:light-dark(#fde8ea,#3a1518);
+--pru:light-dark(#0b4f8a,#6fb3f2);--prubg:light-dark(#e6f0f9,#132538);--prubg2:light-dark(#d4e4f3,#1a3150);
+--ok:light-dark(#1d6b3a,#6fd49a);--warn:light-dark(#8a5a00,#f0c060);--frm:light-dark(#eceef2,#20252e)}
+:root[data-theme=light]{color-scheme:light}:root[data-theme=dark]{color-scheme:dark}
+*{box-sizing:border-box;min-width:0}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.55 Literata,Georgia,serif;overflow-x:clip}
+.band{padding:clamp(24px,4vw,56px) max(5vw,16px)}
+.wrap{max-width:1240px;margin:0 auto}
+h1{font-size:clamp(32px,5vw,48px);line-height:1.05;margin:0 0 8px;font-weight:600;text-wrap:balance}
+h2{font-size:24px;margin:0 0 12px;font-weight:600}
+.lede{color:var(--mute);margin:0 0 20px;max-width:70ch}
+.mono,textarea,code,.cell b{font-family:"IBM Plex Mono",ui-monospace,monospace}
+textarea{width:100%;min-height:120px;font-size:16px;padding:14px;border:1.5px solid var(--line);border-radius:8px;background:var(--panel);color:var(--ink);resize:vertical}
+textarea:focus,button:focus-visible,input:focus-visible{outline:3px solid var(--pru);outline-offset:2px}
+.bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:12px 0}
+button,.seg label{font:inherit;font-size:14px;min-height:44px;padding:0 14px;border:1.5px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);cursor:pointer}
+button:hover{border-color:var(--pru)}
+select{font:inherit;font-size:16px;min-height:44px;padding:0 36px 0 12px;border:1.5px solid var(--line);border-radius:8px;background:var(--bg) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%237a8090' stroke-width='1.6'/%3E%3C/svg%3E") no-repeat right 12px center;color:var(--ink);appearance:none;cursor:pointer;margin-right:8px}
+select:focus-visible{outline:3px solid var(--pru);outline-offset:2px}
+.seg{display:inline-flex;border:1.5px solid var(--line);border-radius:8px;overflow:hidden}
+.seg input{position:absolute;opacity:0}.seg label{border:0;border-radius:0;display:flex;align-items:center}
+.seg input:checked+label{background:var(--pru);color:var(--bg)}
+.seg input:focus-visible+label{outline:3px solid var(--pru);outline-offset:-3px}
+.small{font-size:14px;color:var(--mute)}
+.sum{margin:18px 0 8px;font-size:15px}
+.card{border:1.5px solid var(--line);border-radius:10px;margin:14px 0;overflow:hidden}
+.card.bad{border-color:var(--car)}
+.hd{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:baseline;padding:14px 16px;background:var(--panel)}
+.hd h3{margin:0;font-size:20px;font-weight:600}
+.hd .code{font-family:"IBM Plex Mono",monospace;color:var(--car);font-weight:600}
+.chip{font-size:13px;padding:2px 8px;border-radius:99px;border:1px solid var(--line);white-space:nowrap}
+.chip.ok{color:var(--ok);border-color:currentColor}.chip.err{color:var(--car);border-color:currentColor}.chip.warn{color:var(--warn);border-color:currentColor}
+.rib{display:flex;flex-wrap:wrap;gap:4px;padding:14px 16px}
+.cell{display:flex;flex-direction:column;border-radius:6px;padding:6px 8px;background:var(--prubg);max-width:100%}
+.cell:nth-child(even of .m){background:var(--prubg2)}
+.cell b{font-size:15px;font-weight:600;letter-spacing:.02em;overflow-wrap:anywhere}
+.cell span{font-size:13px;color:var(--mute);line-height:1.25}
+.cell.f{background:var(--frm)}.cell.c{background:var(--carbg)}.cell.c b{color:var(--car)}
+.cell.e{background:var(--carbg);outline:1.5px dashed var(--car)}
+table{border-collapse:collapse;width:100%;font-size:15px}
+th,td{text-align:left;padding:7px 10px;border-top:1px solid var(--line);vertical-align:top}
+th{font-size:13px;color:var(--mute);font-weight:400}
+td.h{font-family:"IBM Plex Mono",monospace;white-space:nowrap;color:var(--pru)}
+tr.d td{color:var(--ink);font-weight:600}
+tr.w td:last-child{color:var(--warn)}tr.x td:last-child{color:var(--car)}
+.fields{padding:0 6px 10px}
+.wire{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 16px 16px}
+.wire code{background:var(--panel);padding:8px 10px;border-radius:6px;font-size:15px}
+.note{padding:0 16px 14px;font-size:14px;color:var(--mute)}
+.ref{background:var(--panel)}
+.ref input{font:inherit;font-size:16px;min-height:44px;padding:0 12px;border:1.5px solid var(--line);border-radius:8px;width:min(100%,360px);background:var(--bg);color:var(--ink)}
+.ref table{background:var(--bg);border-radius:8px}
+.tag{display:inline-block;font-size:12px;border:1px solid var(--line);border-radius:4px;padding:0 5px;margin:1px 2px 1px 0;color:var(--mute);white-space:nowrap}
+dl{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:4px 14px;font-size:14px;margin:12px 0 0}
+dt{font-family:"IBM Plex Mono",monospace;color:var(--pru)}dd{margin:0;color:var(--mute)}
+.tools{margin:4px 0 10px}.chk{display:inline-flex;align-items:center;gap:8px;min-height:44px;font-size:14px;cursor:pointer}.chk input{width:18px;height:18px;accent-color:var(--pru)}
+.clist{border:1.5px solid var(--line);border-radius:10px;overflow:hidden}
+.row{border-top:1px solid var(--line)}.row:first-child{border-top:0}
+.row.bad{background:var(--carbg)}
+.ln{display:grid;grid-template-columns:2.6em 3.4em minmax(9em,22em) minmax(0,1fr) auto;gap:10px;align-items:center;min-height:40px;padding:4px 12px;font-size:14px;list-style:none;cursor:pointer}
+div.row .ln{cursor:default}
+.ln::-webkit-details-marker{display:none}
+summary.ln:hover{background:var(--panel)}summary.ln:focus-visible{outline:3px solid var(--pru);outline-offset:-3px}
+.ln .n{color:var(--mute);text-align:right;font-variant-numeric:tabular-nums}
+.ln .cd{font-family:"IBM Plex Mono",monospace;font-weight:600;color:var(--car);white-space:nowrap}
+.ln .nm{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ln .sm{font-family:"IBM Plex Mono",monospace;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--ink)}
+.ln .st{white-space:nowrap;font-size:13px}.ln .st.ok{color:var(--ok)}.ln .st.err{color:var(--car);font-weight:600}
+details.row[open]>summary{background:var(--panel)}
+details.row>.card{margin:0 10px 12px}
+@media(max-width:600px){.ln{grid-template-columns:2em 3em minmax(0,1fr) auto;row-gap:2px}.ln .sm{grid-column:3/5;grid-row:2}}
+pre,.scroll{overflow-x:auto}code{overflow-wrap:anywhere}
+@media(prefers-reduced-motion:no-preference){.card{animation:in .25s ease-out}@keyframes in{from{opacity:0;transform:translateY(4px)}}}
+@media(max-width:600px){table{font-size:13px}.stack thead{display:none}.stack tr{display:grid;padding-block:10px}.stack td{display:flow-root;border:0;padding:3px 0;padding-inline-start:8em;text-align:start}.stack td::before{content:attr(data-l);float:inline-start;width:7.5em;margin-inline-start:-8em;white-space:normal;color:var(--mute);font-family:Literata,serif}.stack td:empty{display:none}}
+</style><script>new MutationObserver(()=>{for(const c of document.querySelectorAll('.stack td:not([data-l])')){let i=0,p=c;while(p=p.previousElementSibling)i+=p.colSpan;c.dataset.l=c.closest('table').rows[0].cells[i]?.textContent||''}}).observe(document,{childList:true,subtree:true})</script></head>
+<body>
+<section class="band"><div class="wrap">
+<h1>SW-P-08 hex decoder</h1>
+<p class="lede">Paste Pro-Bel / Grass Valley SW-P-08 traffic in hex — one frame, a capture stream, or just the bare message. Each frame is unpacked into its command name, fields, byte count and checksum.</p>
+<label for="in" class="small">Hex bytes (spaces, commas, <span class="mono">0x</span>, <span class="mono">\x</span> or none)</label>
+<textarea id="in" spellcheck="false" autocomplete="off"></textarea>
+<div class="bar">
+<select id="ex" aria-label="Load an example"></select>
+<span class="small">Show numbers</span>
+<div class="seg" role="radiogroup" aria-label="Numbering"><input type="radio" name="nb" id="nb0" value="0" checked><label for="nb0">As on the wire (0-based)</label><input type="radio" name="nb" id="nb1" value="1"><label for="nb1">As on panels (1-based)</label></div>
+<span class="small">View</span>
+<div class="seg" role="radiogroup" aria-label="View"><input type="radio" name="vw" id="vw-auto" value="auto" checked><label for="vw-auto">Auto</label><input type="radio" name="vw" id="vw-detailed" value="detailed"><label for="vw-detailed">Detailed</label><input type="radio" name="vw" id="vw-compact" value="compact"><label for="vw-compact">Compact</label></div>
+<button id="clr" type="button">Clear</button>
+</div>
+<div id="out" aria-live="polite"></div>
+</div></section>
+
+<section class="band ref" id="reference"><div class="wrap">
+<h2>Command reference</h2>
+<p class="small" style="max-width:75ch">Many routers implement only a subset of SW-P-08, and some vendors number a few commands differently. Codes below are merged from several sources; the tags show who documents each one. A dash in the layout column means only the name is known — the decoder then shows the raw bytes and any readable text.</p>
+<div class="bar"><input id="q" type="search" placeholder="Filter by code or name" aria-label="Filter commands"></div>
+<div class="scroll"><table class="stack" id="rt"><thead><tr><th>Hex</th><th>Dec</th><th>Name</th><th>Direction</th><th>Message bytes after the command</th><th>Sources</th></tr></thead><tbody></tbody></table></div>
+<dl id="lg"></dl>
+<p class="small">Framing: <span class="mono">DLE STX</span> (10 02) · DATA (command + message) · BTC = length of DATA · CHK = 8-bit two’s complement of DATA + BTC · <span class="mono">DLE ETX</span> (10 03). Any 10 inside DATA, BTC or CHK is sent doubled (10 10). <span class="mono">10 06</span> = ACK, <span class="mono">10 15</span> = NAK. In standard commands, Matrix/Level packs matrix in bits 4–7 and level in bits 0–3; the multiplier carries Dest DIV 128 in bits 4–6, a bad-source flag in bit 3 and Src DIV 128 in bits 0–2. Extended commands (bit 7 set) send matrix and level as separate bytes and numbers as 16-bit DIV 256 / MOD 256 pairs.</p>
+</div></section>
+
+<script>
+{
+const SRC={S:'SW-P-88 Issue 4b (Grass Valley / Snell)',L:'Lawo VSM SW-P-08 driver',C:'Bitfocus Companion SW-P-08 module (cites SW-P-08 Issue 32)',V:'VideoHubSim router simulator',U:'Ross Ultrix captures (Sode project)',P2:'SW-P-02 meaning of the code'};
+// [code, name, direction, layout, sources, note]
+const T=[
+[0x00,'Command Enable','to router','—','C'],
+[0x01,'Crosspoint Interrogate','to router','Matrix/Level, Multiplier, Dest MOD 128','S L C V'],
+[0x02,'Crosspoint Connect','to router','Matrix/Level, Multiplier, Dest MOD 128, Src MOD 128','S L C V'],
+[0x03,'Crosspoint Tally','from router','Matrix/Level, Multiplier, Dest MOD 128, Src MOD 128','S L C V'],
+[0x04,'Crosspoint Connected','from router','Matrix/Level, Multiplier, Dest MOD 128, Src MOD 128','S L C V'],
+[0x05,'Connect On Go (SW-P-02)','to router','—','P2','Defined in SW-P-02; rarely used over SW-P-08.'],
+[0x06,'Go (SW-P-02)','to router','00 = set stored routes, 01 = clear','P2','Defined in SW-P-02; rarely used over SW-P-08.'],
+[0x07,'Maintenance','to router','—','C'],
+[0x08,'Dual Controller Status Request','to router','none','S L C'],
+[0x09,'Dual Controller Status Response','from router','Status byte (active / idle flag)','S L C'],
+[0x0A,'Protect Interrogate','to router','Matrix/Level, Multiplier, Dest MOD 128 [, Device MOD 128]','L C'],
+[0x0B,'Protect Tally','from router','Matrix/Level, Protect details, Multiplier, Dest MOD 128, Device MOD 128','L C'],
+[0x0C,'Protect Connect','to router','Matrix/Level, Multiplier, Dest MOD 128, Device MOD 128','L C','In SW-P-02 this code is Connect On Go Acknowledge.'],
+[0x0D,'Protect Connected','from router','Matrix/Level, Protect details, Multiplier, Dest MOD 128, Device MOD 128','L C','In SW-P-02 this code is Go Done Acknowledge.'],
+[0x0E,'Protect Disconnect','to router','Matrix/Level, Multiplier, Dest MOD 128, Device MOD 128','L C'],
+[0x0F,'Protect Disconnected','from router','Matrix/Level, Protect details, Multiplier, Dest MOD 128, Device MOD 128','C','Lawo’s table lists 15 as a second “Protect Device Name Request”.'],
+[0x11,'Protect Device Name Request','to router','—','L C U'],
+[0x12,'Protect Device Name Response','from router','— (device name text)','L C U'],
+[0x13,'Protect Tally Dump Request','to router','—','L C'],
+[0x14,'Protect Tally Dump','from router','—','L C'],
+[0x15,'Crosspoint Tally Dump Request','to router','Matrix/Level','S L C V'],
+[0x16,'Crosspoint Tally Dump (Byte)','from router','Matrix/Level, Count, First Dest, Src × count','S L C'],
+[0x17,'Crosspoint Tally Dump (Word)','from router','Matrix/Level, Count, First Dest (2), Src (2) × count','S L C'],
+[0x19,'Router I/O Parameters Interrogate','to router','—','L C'],
+[0x1A,'Router I/O Parameters Tally','from router','—','L C'],
+[0x1B,'Router I/O Parameters Connect','to router','—','L C'],
+[0x1C,'Router I/O Parameters Connected','from router','—','L C'],
+[0x1D,'Master Protect Connect','to router','—','L C'],
+[0x1E,'Names Updated','from router','Matrix bitmap (4), Name-type flags (4)','L C'],
+[0x29,'Diagnostic Request','to router','—','L C'],
+[0x2B,'Diagnostic Response','from router','—','L C'],
+[0x2C,'Log Message','from router','— (text)','L C'],
+[0x4C,'Status / Configuration & Enable Flags Request','to router','—','L C'],
+[0x4D,'Status / Configuration Tally','from router','—','L C'],
+[0x4E,'Logging Strings','from router','— (text)','L C'],
+[0x4F,'Error & Status Request','to router','—','L C'],
+[0x57,'Soft Key Tally Request','to router','—','C'],
+[0x58,'Soft Key Tally Response','from router','—','C'],
+[0x59,'Soft Key Assignment Set Request','to router','—','C'],
+[0x5A,'Soft Key Assignment Set Response','from router','—','C'],
+[0x60,'Vendor Specific','both','— (vendor defined)','L'],
+[0x61,'Protocol Implementation Request','to router','none','C V','Lawo labels 97 “Single Source Names Request”, apparently a typo.'],
+[0x62,'Protocol Implementation Response','from router','2 header bytes, then one byte per supported command','L C'],
+[0x63,'Invalid Message','from router','—','L'],
+[0x64,'All Source Names Request','to router','Matrix/Level, Name length','L C V'],
+[0x65,'Single Source Name Request','to router','Matrix/Level, Name length, Source (2)','L C'],
+[0x66,'All Destination Association Names Request','to router','Matrix/Level, Name length','L C V'],
+[0x67,'Single Destination Association Name Request','to router','Matrix/Level, Name length, Dest (2)','L C'],
+[0x68,'All UMD Labels Request','to router','Matrix/Level, Name length (assumed)','L C'],
+[0x69,'Single UMD Label Request','to router','Matrix/Level, Name length, Number (2) (assumed)','L C'],
+[0x6A,'Source Names Response','from router','Matrix/Level, Name length, First source (2), Count, Names','L C V'],
+[0x6B,'Destination Association Names Response','from router','Matrix/Level, Name length, First dest (2), Count, Names','L C V'],
+[0x6C,'UMD Labels Response','from router','Matrix/Level, Name length, First (2), Count, Labels (assumed)','L C'],
+[0x6F,'Crosspoint Tie Line Connect','to router','—','L C'],
+[0x70,'Crosspoint Tie Line Interrogate','to router','—','L C'],
+[0x71,'Crosspoint Tie Line Tally','from router','—','L C','The DirectOut manual uses 0x71 for All Source Association Names Request.'],
+[0x72,'All Source Association Names Request','to router','Matrix/Level, Name length','L C','DirectOut documents this as 0x71.'],
+[0x73,'Single Source Association Name Request','to router','Matrix/Level, Name length, Source (2)','L C','DirectOut documents this as 0x72.'],
+[0x74,'Source Association Names Response','from router','Matrix/Level, Name length, First source (2), Count, Names','L C'],
+[0x75,'Update Name Request','to router','—','L C'],
+[0x78,'Crosspoint Connect On Go Group Salvo','to router','Matrix/Level, Multiplier, Dest, Src, Salvo','S L C'],
+[0x79,'Crosspoint Go Group Salvo','to router','00 = set / 01 = clear, Salvo','S L C'],
+[0x7A,'Crosspoint Connect On Go Group Salvo Acknowledge','from router','Matrix/Level, Multiplier, Dest, Src, Salvo','S L C'],
+[0x7B,'Crosspoint Go Done Group Salvo Acknowledge','from router','Status (00 set / 01 cleared / 02 none), Salvo','S L C'],
+[0x7C,'Crosspoint Salvo Group Interrogate','to router','Salvo, Connect index','S L C'],
+[0x7D,'Crosspoint Group Salvo Tally','from router','Matrix/Level, Multiplier, Dest, Src, Salvo, Connect index, Validity','S L C'],
+[0x81,'Extended Crosspoint Interrogate','to router','Matrix, Level, Dest (2)','L C V'],
+[0x82,'Extended Crosspoint Connect','to router','Matrix, Level, Dest (2), Src (2)','L C V'],
+[0x83,'Extended Crosspoint Tally','from router','Matrix, Level, Dest (2), Src (2)','L C V'],
+[0x84,'Extended Crosspoint Connected','from router','Matrix, Level, Dest (2), Src (2)','L C V'],
+[0x8A,'Extended Protect Interrogate','to router','Matrix, Level, Dest (2)','L C U'],
+[0x8B,'Extended Protect Tally','from router','Matrix, Level, Protect details, Dest (2), Device (2)','L C U'],
+[0x8C,'Extended Protect Connect','to router','Matrix, Level, Dest (2), Device (2)','L C U'],
+[0x8D,'Extended Protect Connected','from router','Matrix, Level, Protect details, Dest (2), Device (2)','L C U'],
+[0x8E,'Extended Protect Disconnect','to router','Matrix, Level, Dest (2), Device (2)','L C U'],
+[0x8F,'Extended Protect Disconnected','from router','Matrix, Level, Protect details, Dest (2), Device (2)','L C U'],
+[0x93,'Extended Protect Tally Dump Request','to router','Matrix, Level, First dest (2)','L C U'],
+[0x94,'Extended Protect Tally Dump','from router','Matrix, Level, Count, First dest (2), 2 bytes × count (state bits 4–5, device)','L U'],
+[0x95,'Extended Crosspoint Tally Dump Request','to router','Matrix, Level','L C V'],
+[0x97,'Extended Crosspoint Tally Dump (Word)','from router','Matrix, Level, Count, First Dest (2), Src (2) × count','L C'],
+[0x99,'Extended Router I/O Parameters Interrogate','to router','—','L C'],
+[0x9A,'Extended Router I/O Parameters Tally','from router','—','L'],
+[0x9B,'Extended Router I/O Parameters Connect','to router','—','L C'],
+[0x9C,'Extended Router I/O Parameters Connected','from router','—','L'],
+[0xE4,'Extended All Source Names Request','to router','Matrix, Level, Name length','L C V'],
+[0xE5,'Extended Single Source Name Request','to router','Matrix, Level, Name length, Source (2)','L C'],
+[0xE6,'Extended All Destination Association Names Request','to router','Matrix, Name length','L C V'],
+[0xE7,'Extended Single Destination Association Name Request','to router','Matrix, Name length, Dest (2)','L C'],
+[0xE8,'Extended All UMD Labels Request','to router','Matrix, Level, Name length (assumed)','L C'],
+[0xE9,'Extended Single UMD Label Request','to router','Matrix, Level, Name length, Number (2) (assumed)','L C'],
+[0xEA,'Extended Source Names Response','from router','Matrix, Level, Name length, First source (2), Count, Names','L C V'],
+[0xEB,'Extended Destination Association Names Response','from router','Matrix, Name length, First dest (2), Count, Names','L C V'],
+[0xEC,'Extended UMD Labels Response','from router','—','L'],
+[0xF8,'Extended Crosspoint Connect On Go Group Salvo','to router','Matrix, Level, Dest (2), Src (2), Salvo','L C'],
+[0xFA,'Extended Crosspoint Connect On Go Group Salvo Acknowledge','from router','Matrix, Level, Dest (2), Src (2), Salvo','L'],
+[0xFC,'Extended Crosspoint Salvo Group Interrogate','to router','—','L C'],
+[0xFD,'Extended Crosspoint Group Salvo Tally','from router','—','L']
+];
+const CMD={};T.forEach(r=>CMD[r[0]]={code:r[0],name:r[1],dir:r[2],lay:r[3],src:r[4],note:r[5]||''});
+
+const hx=(v,w=2)=>v.toString(16).toUpperCase().padStart(w,'0');
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let one=false;const N=v=>one?v+1:v;
+let view='auto',probOnly=false;
+const LEN={0:4,1:8,2:12,3:16,4:32};
+const PROT=['Not protected','Pro-Bel protected','Pro-Bel override protected','OEM protected'];
+const ascii=b=>b.map(x=>x>=32&&x<127?String.fromCharCode(x):'·').join('');
+
+// reader over DATA (index 0 = command byte)
+function R(d){
+  const f=[];let i=1;
+  const r={f,d,left:()=>d.length-i,
+    take(n,label,fmt){
+      if(i+n>d.length){if(i<d.length){f.push({a:i,b:d.length,label,value:'incomplete — message ends early',k:'x'});i=d.length}else f.push({a:null,label,value:'missing — message ends early',k:'x'});return null}
+      const bs=d.slice(i,i+n);const v=bs.reduce((a,b)=>a*256+b,0);
+      f.push({a:i,b:i+n,label,value:fmt?fmt(v,bs):(n>1?`${N(v)}  (DIV 256 = ${bs[0]}, MOD 256 = ${bs[1]})`:String(v))});i+=n;return v},
+    opt(n,label,fmt){return r.left()>=n?r.take(n,label,fmt):null},
+    sum(label,value){f.push({a:null,label,value,k:'d'})},
+    rest(label='Message bytes'){if(r.left()>0){const bs=d.slice(i);f.push({a:i,b:d.length,label,value:`${bs.length} byte${bs.length>1?'s':''}; text: “${ascii(bs)}”`,k:'w'});i=d.length}}
+  };return r}
+const fML=v=>`Matrix ${N(v>>4)} · Level ${N(v&15)}`;
+const fMulS=v=>`Dest DIV 128 = ${(v>>4)&7} · Src DIV 128 = ${v&7}${v&8?' · bad-source flag SET':''}`;
+const fMulD=v=>`Dest DIV 128 = ${(v>>4)&7}`;
+const fMulDev=v=>`Dest DIV 128 = ${(v>>4)&7} · Device DIV 128 = ${v&7}`;
+const fN=v=>String(N(v));
+const fLen=v=>LEN[v]!=null?`code ${v} = ${LEN[v]}-character names`:`code ${v} (unknown length)`;
+const fProt=v=>PROT[v&3]+(v>3?` (raw ${v})`:'');
+const ML=r=>r.take(1,'Matrix / Level',fML);
+const xp=r=>{ML(r);const m=r.take(1,'Multiplier',fMulS),d=r.take(1,'Dest MOD 128'),s=r.take(1,'Source MOD 128');if(s!=null){r.sum('Destination',N(((m>>4)&7)*128+d));r.sum('Source',N((m&7)*128+s))}};
+const xpI=r=>{ML(r);const m=r.take(1,'Multiplier',fMulD),d=r.take(1,'Dest MOD 128');if(d!=null)r.sum('Destination',N(((m>>4)&7)*128+d))};
+const exI=r=>{r.take(1,'Matrix',fN);r.take(1,'Level',fN);r.take(2,'Destination')};
+const exX=r=>{exI(r);r.take(2,'Source')};
+const prC=r=>{ML(r);const m=r.take(1,'Multiplier',fMulDev),d=r.take(1,'Dest MOD 128'),v=r.take(1,'Device MOD 128');if(v!=null){r.sum('Destination',N(((m>>4)&7)*128+d));r.sum('Device',((m&7)*128+v))}};
+const prT=r=>{ML(r);r.take(1,'Protect details',fProt);const m=r.take(1,'Multiplier',fMulDev),d=r.take(1,'Dest MOD 128'),v=r.take(1,'Device MOD 128');if(v!=null){r.sum('Destination',N(((m>>4)&7)*128+d));r.sum('Device',((m&7)*128+v))}};
+function names(r,kind){const cl=r.take(1,'Name length',fLen);const first=r.take(2,`First ${kind}`);const n=r.take(1,'Names in this message');const w=LEN[cl];if(n==null)return;if(!w){r.rest();return}
+  for(let k=0;k<n;k++)r.take(w,`${kind[0].toUpperCase()+kind.slice(1)} ${N(first+k)}`,(v,bs)=>`“${ascii(bs).replace(/·/g,' ').trimEnd()}”`)}
+function dumpW(r,ext){if(ext){r.take(1,'Matrix',fN);r.take(1,'Level',fN)}else ML(r);const n=r.take(1,'Tally count');const d0=r.take(2,'First destination');if(n==null||d0==null)return;for(let k=0;k<n;k++)r.take(2,`Dest ${N(d0+k)} ← source`,fN)}
+const P={
+0x01:xpI,0x02:xp,0x03:xp,0x04:xp,
+0x06:r=>r.take(1,'Operation',v=>['Set stored routes','Clear stored routes'][v]||`unknown (${v})`),
+0x09:r=>r.take(1,'Status',v=>`bit 1 (0x02) = ${v&2?1:0} → controller ${v&2?'active':'idle'} (vendor dependent)`),
+0x0A:r=>{xpI(r);r.opt(1,'Device MOD 128')},0x0B:prT,0x0C:prC,0x0D:prT,0x0E:prC,0x0F:prT,
+0x15:ML,
+0x16:r=>{ML(r);const n=r.take(1,'Tally count'),d0=r.take(1,'First destination',fN);if(n==null||d0==null)return;for(let k=0;k<n;k++)r.take(1,`Dest ${N(d0+k)} ← source`,fN)},
+0x17:r=>dumpW(r,false),
+0x1E:r=>{r.take(4,'Matrix bitmap',v=>{const m=[];for(let b=0;b<32;b++)if(v&(2**b))m.push(N(b));return m.length?'Matrices '+m.join(', '):'none'});r.take(4,'Name-type flags',v=>'0x'+hx(v,8)+(v?'':' (all names)'))},
+0x62:r=>{r.take(2,'Header',(v,bs)=>bs.map(x=>hx(x)).join(' '));while(r.left()>0)r.take(1,'Supported',v=>`${hx(v)} · ${CMD[v]?CMD[v].name:'unknown'}`)},
+0x64:r=>{ML(r);r.take(1,'Name length',fLen)},0x66:r=>{ML(r);r.take(1,'Name length',fLen)},0x68:r=>{ML(r);r.take(1,'Name length',fLen)},0x72:r=>{ML(r);r.take(1,'Name length',fLen)},
+0x65:r=>{ML(r);r.take(1,'Name length',fLen);r.take(2,'Source')},0x67:r=>{ML(r);r.take(1,'Name length',fLen);r.take(2,'Destination')},
+0x69:r=>{ML(r);r.take(1,'Name length',fLen);r.take(2,'Label number')},0x73:r=>{ML(r);r.take(1,'Name length',fLen);r.take(2,'Source')},
+0x6A:r=>{ML(r);names(r,'source')},0x6B:r=>{ML(r);names(r,'destination')},0x6C:r=>{ML(r);names(r,'label')},0x74:r=>{ML(r);names(r,'source')},
+0x78:r=>{xp(r);r.take(1,'Salvo',v=>String(v&0x7f))},0x7A:r=>{xp(r);r.take(1,'Salvo group')},
+0x79:r=>{r.take(1,'Operation',v=>['Go — set the stored crosspoints','Clear the stored crosspoints without setting'][v]||`unknown (${v})`);r.take(1,'Salvo')},
+0x7B:r=>{r.take(1,'Status',v=>['Crosspoints set','Stored crosspoints cleared','Nothing to set / clear'][v]||`unknown (${v})`);r.take(1,'Salvo group')},
+0x7C:r=>{r.take(1,'Salvo');r.take(1,'Connect index')},
+0x7D:r=>{xp(r);r.take(1,'Salvo group');r.take(1,'Connect index');r.take(1,'Validity',v=>['Valid, more follow','Valid, last entry','Invalid, no data'][v]||`unknown (${v})`)},
+0x81:exI,0x82:exX,0x83:exX,0x84:exX,0x8A:exI,
+0x8B:r=>{r.take(1,'Matrix',fN);r.take(1,'Level',fN);r.take(1,'Protect details',fProt);r.take(2,'Destination');r.take(2,'Device',v=>String(v))},
+0x8C:r=>{exI(r);r.take(2,'Device',v=>String(v))},
+0x93:r=>{exI(r)},
+0x94:r=>{r.take(1,'Matrix',fN);r.take(1,'Level',fN);const n=r.take(1,'Count'),d0=r.take(2,'First destination');if(n==null||d0==null)return;for(let k=0;k<n;k++)r.take(2,`Dest ${N(d0+k)}`,v=>`${PROT[(v>>12)&3]} · device ${v&0x0fff}`)},
+0x95:r=>{r.take(1,'Matrix',fN);r.take(1,'Level',fN)},0x97:r=>dumpW(r,true),
+0xE4:r=>{r.take(1,'Matrix',fN);r.take(1,'Level',fN);r.take(1,'Name length',fLen)},0xE8:r=>P[0xE4](r),
+0xE5:r=>{P[0xE4](r);r.take(2,'Source')},0xE9:r=>{P[0xE4](r);r.take(2,'Label number')},
+0xE6:r=>{r.take(1,'Matrix',fN);r.take(1,'Name length',fLen)},0xE7:r=>{P[0xE6](r);r.take(2,'Destination')},
+0xEA:r=>{r.take(1,'Matrix',fN);r.take(1,'Level',fN);names(r,'source')},0xEB:r=>{r.take(1,'Matrix',fN);names(r,'destination')},
+0xF8:r=>{exX(r);r.take(1,'Salvo')},0xFA:r=>{exX(r);r.take(1,'Salvo')}
+};
+P[0x8D]=P[0x8B];P[0x8F]=P[0x8B];P[0x8E]=P[0x8C];
+
+// ---------- input parsing ----------
+function toBytes(s){
+  s=s.replace(/0x|\\x/gi,' ').replace(/\b([0-9a-f]{1,2})h\b/gi,'$1');
+  const toks=s.split(/[^0-9a-fA-F]+/).filter(Boolean);const out=[];const bad=[];
+  for(const t of toks){if(t.length%2){if(t.length===1)out.push(parseInt(t,16));else bad.push(t);continue}for(let i=0;i<t.length;i+=2)out.push(parseInt(t.slice(i,i+2),16))}
+  return{out,bad}}
+const chk=d=>{let s=d.length;d.forEach(x=>s+=x);return(256-(s&255))&255};
+function frame(d){const all=[...d,d.length,chk(d)],o=[0x10,0x02];all.forEach(x=>{o.push(x);if(x===0x10)o.push(0x10)});o.push(0x10,0x03);return o}
+function scan(b){
+  const items=[];let stray=[];const flush=()=>{if(stray.length){items.push({t:'stray',bytes:stray});stray=[]}};
+  let i=0;const n=b.length;
+  while(i<n){
+    if(b[i]===0x10&&b[i+1]===0x02){flush();let j=i+2;const p=[];let st=0,closed=false,lone=0;
+      while(j<n){if(b[j]===0x10){if(b[j+1]===0x10){p.push(0x10);j+=2;st++;continue}if(b[j+1]===0x03){closed=true;j+=2;break}if(b[j+1]===0x02||b[j+1]===0x06||b[j+1]===0x15)break;lone++;p.push(b[j]);j++;continue}p.push(b[j]);j++}
+      items.push({t:'msg',p,st,closed,lone,wire:j-i});i=j}
+    else if(b[i]===0x10&&(b[i+1]===0x06||b[i+1]===0x15)){flush();items.push({t:b[i+1]===0x06?'ack':'nak'});i+=2}
+    else{stray.push(b[i]);i++}
+  }flush();return items}
+
+function decodeData(d){const c=CMD[d[0]];const r=R(d);const fn=P[d[0]];if(fn)fn(r);if(r.left()>0)r.rest(fn?'Extra bytes (beyond documented layout)':'Message bytes');return{c,f:r.f}}
+
+function ribbon(d,f,framed,btc,ck){
+  const cells=[];const seg=(bytes,label,k)=>cells.push(`<div class="cell ${k}"><b>${bytes.map(x=>hx(x)).join(' ')}</b><span>${esc(label)}</span></div>`);
+  if(framed&&!framed.trail)seg([0x10,0x02],'DLE STX','f');
+  seg([d[0]],'Command','c');
+  f.filter(x=>x.a!=null).forEach(x=>seg(d.slice(x.a,x.b),x.label,x.k==='x'?'e':x.k==='w'?'e m':'m'));
+  if(framed){seg([btc[0]],'BTC',btc[1]?'f':'e');seg([ck[0]],'CHK',ck[1]?'f':'e');if(!framed.trail)seg([0x10,0x03],'DLE ETX','f')}
+  return`<div class="rib">${cells.join('')}</div>`}
+function fieldTable(d,f){
+  const rows=f.map(x=>`<tr class="${x.k||''}"><td class="h">${x.a!=null?d.slice(x.a,x.b).map(v=>hx(v)).join(' '):''}</td><td>${esc(x.label)}</td><td>${esc(x.value)}</td></tr>`).join('');
+  return rows?`<div class="fields scroll"><table class="stack"><thead><tr><th>Bytes</th><th>Field</th><th>Value</th></tr></thead><tbody>${rows}</tbody></table></div>`:''}
+function title(d){const c=CMD[d[0]];let nm=c?c.name:'Unknown command';if(!c&&d[0]&0x80&&CMD[d[0]&0x7f])nm=`Unknown — extended form of ${CMD[d[0]&0x7f].name}?`;return{nm,dir:c?c.dir:'',note:c?c.note:''}}
+function card(d,opts){
+  const{nm,dir,note}=title(d);const{f}=decodeData(d);const chips=[];let bad=false;
+  if(dir)chips.push(`<span class="chip">${esc(dir)}</span>`);
+  if(opts.framed){
+    chips.push(opts.btcOk?`<span class="chip ok">byte count ${opts.btc} ✓</span>`:`<span class="chip err">byte count ${opts.btc}, expected ${d.length}</span>`);
+    chips.push(opts.ckOk?`<span class="chip ok">checksum ✓</span>`:`<span class="chip err">checksum ${hx(opts.ck)}, expected ${hx(chk(d))}</span>`);
+    if(opts.st)chips.push(`<span class="chip">${opts.st} DLE doubled on the wire</span>`);
+    if(!opts.closed)chips.push(`<span class="chip err">no DLE ETX</span>`);
+    if(opts.lone)chips.push(`<span class="chip err">${opts.lone} lone DLE</span>`);
+    bad=!opts.btcOk||!opts.ckOk||!opts.closed||opts.lone>0}
+  else chips.push(`<span class="chip warn">bare message — no framing</span>`);
+  if(f.some(x=>x.k==='x'))bad=true;
+  const wire=opts.framed?'':`<div class="wire"><span class="small">Framed for the wire</span><code>${frame(d).map(x=>hx(x)).join(' ')}</code><button type="button" data-copy="${frame(d).map(x=>hx(x)).join(' ')}">Copy</button></div>`;
+  const nt=note?`<p class="note">${esc(note)}</p>`:'';
+  const notDecoded=!P[d[0]]&&d.length>1?`<p class="note">No byte layout is published for this command in the sources used; raw bytes are shown.</p>`:'';
+  const why=[];if(opts.framed){if(!opts.btcOk)why.push(`byte count ${opts.btc} ≠ ${d.length}`);if(!opts.ckOk)why.push(`checksum ${hx(opts.ck)} ≠ ${hx(chk(d))}`);if(!opts.closed)why.push('no DLE ETX');if(opts.lone)why.push('lone DLE')}
+  if(f.some(x=>x.k==='x'))why.push('message too short');
+  const html=`<article class="card${bad?' bad':''}"><div class="hd"><span class="code">${hx(d[0])}</span><h3>${esc(nm)}</h3>${chips.join('')}</div>${ribbon(d,f,opts.framed?(opts.trail?{trail:1}:true):false,[opts.btc,opts.btcOk],[opts.ck,opts.ckOk])}${fieldTable(d,f)}${nt}${notDecoded}${wire}</article>`;
+  return{html,bad,code:hx(d[0]),name:nm,dir,sum:brief(f),st:why.join(' · ')||(opts.framed?'':'no framing')}}
+// one-line summary of the decoded fields, for compact view
+function brief(f){
+  const skip=/^(Multiplier|Dest MOD 128|Source MOD 128|Device MOD 128|Name length|Header)$/;
+  const out=[];let dst=null;const sup=f.filter(x=>x.label==='Supported');
+  if(sup.length)return`${sup.length} supported: `+sup.map(x=>String(x.value).slice(0,2)).join(' ');
+  for(const x of f){if(skip.test(x.label)||x.k==='x')continue;
+    const v=String(x.value).replace(/\s*\(DIV 256.*\)$/,'');
+    if(x.label==='Destination'){dst=v;out.push(null);continue}
+    if(x.label==='Source'&&dst!=null){out[out.indexOf(null)]=`Dest ${dst} ← Src ${v}`;dst=null;continue}
+    out.push(x.label==='Matrix / Level'?v:x.k==='w'?`+${v}`:`${x.label} ${v}`)}
+  return out.map(s=>s===null?`Dest ${dst}`:s).join(' · ')}
+
+function render(){
+  const s=ta.value;const out=document.getElementById('out');
+  try{localStorage.setItem('swp08in',s)}catch(e){}
+  const{out:b,bad}=toBytes(s);
+  if(!b.length){out.innerHTML=`<p class="sum small">Paste bytes above or pick an example.</p>`;return}
+  const E=[];let msgs=0,acks=0,naks=0,errs=0;
+  const items=scan(b);
+  const onlyStray=items.length===1&&items[0].t==='stray';
+  if(onlyStray){
+    let d=items[0].bytes;const n=d.length;msgs++;
+    if(n>=3&&d[n-2]===n-2&&chk(d.slice(0,n-2))===d[n-1])E.push(card(d.slice(0,n-2),{framed:true,btc:d[n-2],btcOk:true,ck:d[n-1],ckOk:true,closed:true,st:0,lone:0,trail:1}));
+    else E.push(card(d,{framed:false}));
+  }else for(const it of items){
+    if(it.t==='ack'){acks++;E.push({plain:1,code:'10 06',name:'ACK',sum:'frame received correctly',st:'',bad:false,html:`<article class="card"><div class="hd"><span class="code">10 06</span><h3>ACK</h3><span class="chip ok">frame received correctly</span></div></article>`})}
+    else if(it.t==='nak'){naks++;E.push({plain:1,code:'10 15',name:'NAK',sum:'previous frame rejected',st:'NAK',bad:true,html:`<article class="card bad"><div class="hd"><span class="code">10 15</span><h3>NAK</h3><span class="chip err">receiver rejected the previous frame (format, byte count or checksum)</span></div></article>`})}
+    else if(it.t==='stray'){errs++;E.push({code:'??',name:'Bytes outside any frame',sum:sp(it.bytes),st:`${it.bytes.length} stray`,bad:true,html:`<article class="card bad"><div class="hd"><span class="code">??</span><h3>Bytes outside any frame</h3><span class="chip err">${it.bytes.length} byte${it.bytes.length>1?'s':''}</span></div><div class="rib">${it.bytes.map(x=>`<div class="cell e"><b>${hx(x)}</b><span>stray</span></div>`).join('')}</div></article>`})}
+    else{msgs++;const p=it.p;
+      if(p.length<3){errs++;E.push({code:'10 02',name:'Truncated frame',sum:sp(p),st:'truncated',bad:true,html:`<article class="card bad"><div class="hd"><span class="code">10 02</span><h3>Truncated frame</h3><span class="chip err">only ${p.length} byte${p.length===1?'':'s'} between STX and ETX</span></div></article>`});continue}
+      const d=p.slice(0,-2),btc=p[p.length-2],ck=p[p.length-1];
+      const o={framed:true,btc,btcOk:btc===d.length,ck,ckOk:chk(d)===ck,closed:it.closed,st:it.st,lone:it.lone};
+      const c=card(d,o);if(c.bad)errs++;E.push(c)}
+  }
+  const parts=[`${msgs} message${msgs===1?'':'s'}`];if(acks)parts.push(`${acks} ACK`);if(naks)parts.push(`${naks} NAK`);
+  const warn=bad.length?` · ignored odd-length token${bad.length>1?'s':''}: ${esc(bad.join(', '))}`:'';
+  const compact=view==='compact'||(view==='auto'&&E.length>4);
+  let rows=E.map((e,i)=>({...e,i:i+1}));
+  if(compact){const m=[];for(const e of rows){const prev=m[m.length-1];
+      if(e.plain&&prev&&!prev.plain&&!prev.reply){prev.reply=e.name;if(e.bad){prev.bad=true;prev.st=(prev.st?prev.st+' · ':'')+'NAK'}}else m.push(e)}
+    rows=m;rows.forEach((e,k)=>e.i=k+1)}
+  const shown=rows.filter(e=>!probOnly||e.bad);
+  const tools=E.length>1?`<div class="bar tools">${compact?'<button type="button" data-all="1">Expand all</button><button type="button" data-all="0">Collapse all</button>':''}<label class="chk"><input type="checkbox" id="prob"${probOnly?' checked':''}> Only show problems</label>${view==='auto'?`<span class="small">${compact?'Compact view: more than 4 entries':'Detailed view'} (auto)</span>`:''}</div>`:'';
+  const body=compact
+    ?`<div class="clist">${shown.map(e=>{const line=`<span class="n">${e.i}</span><span class="cd">${esc(e.code)}</span><span class="nm">${esc(e.name)}</span><span class="sm">${esc(e.sum)}</span><span class="st ${e.bad?'err':'ok'}">${e.bad?'✗ '+esc(e.st):(e.st?esc(e.st):'✓')+(e.reply==='ACK'?' ACK':'')}</span>`;
+        return e.plain?`<div class="row${e.bad?' bad':''}"><div class="ln">${line}</div></div>`:`<details class="row${e.bad?' bad':''}"><summary class="ln">${line}</summary>${e.html}</details>`}).join('')}</div>`
+    :shown.map(e=>e.html).join('');
+  out.innerHTML=`<p class="sum">${b.length} bytes · ${parts.join(' · ')} · ${errs?`<span style="color:var(--car)">${errs} with problems</span>`:'<span style="color:var(--ok)">no framing errors</span>'}${warn}</p>`+tools+(shown.length?body:'<p class="small">No problems found.</p>')}
+
+// ---------- examples (frames built here so checksums are always right) ----------
+const sp=a=>a.map(x=>hx(x)).join(' ');
+const EX=[
+['Interrogate',sp(frame([0x01,0x11,0x00,0x01]))],
+['Connect',sp(frame([0x02,0x00,0x00,0x05,0x0A]))],
+['Tally > 128',sp(frame([0x03,0x00,0x12,0x48,0x2C]))],
+['DLE stuffing',sp(frame([0x04,0x00,0x00,0x10,0x03]))],
+['Route + ACK + reply',sp(frame([0x02,0x00,0x00,0x05,0x0A]))+' 10 06 '+sp(frame([0x04,0x00,0x00,0x05,0x0A]))+' 10 06'],
+['Source names',sp(frame([0x6A,0x00,0x00,0x00,0x00,0x02,...[...'CAM1CAM2'].map(c=>c.charCodeAt(0))]))],
+['Tally dump',sp(frame([0x16,0x00,0x03,0x00,0x04,0x07,0x09]))],
+['Extended connect',sp(frame([0x82,0x00,0x01,0x03,0xE8,0x05,0xDC]))],
+['Ext protect tally',sp(frame([0x8B,0x00,0x00,0x01,0x00,0x1A,0x00,0x7E]))],
+['Capture log',[
+  frame([0x61]),[0x10,0x06],frame([0x62,0x00,0x00,0x01,0x02,0x03,0x04,0x15,0x16,0x64,0x66,0x6A,0x6B,0x81,0x82]),[0x10,0x06],
+  frame([0x64,0x00,0x00]),[0x10,0x06],frame([0x6A,0x00,0x00,0x00,0x00,0x03,...[...'CAM1CAM2VTR1'].map(c=>c.charCodeAt(0))]),[0x10,0x06],
+  frame([0x15,0x00]),[0x10,0x06],frame([0x16,0x00,0x04,0x00,0x00,0x01,0x02,0x02]),[0x10,0x06],
+  frame([0x02,0x00,0x00,0x05,0x0A]),[0x10,0x06],frame([0x04,0x00,0x00,0x05,0x0A]),[0x10,0x06],
+  frame([0x02,0x01,0x12,0x48,0x2C]),[0x10,0x06],frame([0x04,0x01,0x12,0x48,0x2C]),[0x10,0x06],
+  [0x10,0x02,0x02,0x00,0x00,0x07,0x01,0x05,0x00,0x10,0x03],[0x10,0x15],frame([0x02,0x00,0x00,0x07,0x01]),[0x10,0x06],frame([0x04,0x00,0x00,0x07,0x01]),[0x10,0x06],
+  frame([0x82,0x00,0x00,0x03,0xE8,0x05,0xDC]),[0x10,0x06],frame([0x84,0x00,0x00,0x03,0xE8,0x05,0xDC]),[0x10,0x06]
+].map(sp).join('\n')],
+['Group salvo',(()=>{const A=[0x10,0x06],S=5,x=[[0x00,0x01,0x0A],[0x00,0x02,0x0B],[0x12,0x48,0x2C]],L=[];
+  // 1. load each crosspoint into salvo 5; router stores it and acknowledges with 7A
+  x.forEach(([m,d,s])=>L.push(frame([0x78,0x00,m,d,s,S]),A,frame([0x7A,0x00,m,d,s,S]),A));
+  // 2. optional check of what is stored: interrogate entry 0, router answers with 7D
+  L.push(frame([0x7C,S,0x00]),A,frame([0x7D,0x00,0x00,0x01,0x0A,S,0x00,0x00]),A);
+  // 3. fire it: Go (set) salvo 5, router confirms Go Done, then tallies each new route
+  L.push(frame([0x79,0x00,S]),A,frame([0x7B,0x00,S]),A);
+  x.forEach(([m,d,s])=>L.push(frame([0x04,0x00,m,d,s]),A));
+  return L.map(sp).join('\n')})()],
+['Extended salvo',(()=>{const A=[0x10,0x06],S=7,x=[[0x00,0x03,0xE8,0x05,0xDC],[0x01,0x03,0xE8,0x05,0xDD]],L=[];
+  x.forEach(([lv,dh,dl,sh,sl])=>L.push(frame([0xF8,0x00,lv,dh,dl,sh,sl,S]),A,frame([0xFA,0x00,lv,dh,dl,sh,sl,S]),A));
+  L.push(frame([0x79,0x00,S]),A,frame([0x7B,0x00,S]),A);
+  x.forEach(([lv,dh,dl,sh,sl])=>L.push(frame([0x84,0x00,lv,dh,dl,sh,sl]),A));
+  return L.map(sp).join('\n')})()],
+['Bad checksum','10 02 02 00 00 05 0A 05 EB 10 03'],
+['Bare message','02 00 00 05 0A']
+];
+const ta=document.getElementById('in');
+const GRP=[['Sequences',[10,11,4,9]],['Single messages',[0,1,2,3,5,6,7,8]],['Edge cases',[12,13]]];
+const exSel=document.getElementById('ex');
+exSel.innerHTML='<option value="">Load an example…</option>'+GRP.map(([g,ix])=>`<optgroup label="${esc(g)}">${ix.map(i=>`<option value="${i}">${esc(EX[i][0])}</option>`).join('')}</optgroup>`).join('');
+exSel.addEventListener('change',()=>{if(exSel.value==='')return;ta.value=EX[+exSel.value][1];render();exSel.value=''});
+document.getElementById('clr').addEventListener('click',()=>{ta.value='';render();ta.focus()});
+ta.addEventListener('input',render);
+document.querySelectorAll('input[name=nb]').forEach(x=>x.addEventListener('change',()=>{one=x.value==='1'&&x.checked?true:document.getElementById('nb1').checked;try{localStorage.setItem('swp08one',one?'1':'0')}catch(e){}render()}));
+document.querySelectorAll('input[name=vw]').forEach(x=>x.addEventListener('change',()=>{if(!x.checked)return;view=x.value;try{localStorage.setItem('swp08view',view)}catch(e){}render()}));
+document.getElementById('out').addEventListener('change',e=>{if(e.target.id==='prob'){probOnly=e.target.checked;render()}});
+document.getElementById('out').addEventListener('click',e=>{const a=e.target.closest('[data-all]');if(a)document.querySelectorAll('#out details.row').forEach(d=>d.open=a.dataset.all==='1')});
+document.getElementById('out').addEventListener('click',async e=>{const b=e.target.closest('[data-copy]');if(!b)return;try{await navigator.clipboard.writeText(b.dataset.copy);b.textContent='Copied'}catch(err){const c=b.previousElementSibling;const rg=document.createRange();rg.selectNodeContents(c);const s=getSelection();s.removeAllRanges();s.addRange(rg);b.textContent='Selected — press Ctrl+C'}setTimeout(()=>b.textContent='Copy',1600)});
+
+// ---------- reference ----------
+document.getElementById('lg').innerHTML=Object.entries(SRC).map(([k,v])=>`<dt>${k}</dt><dd>${esc(v)}</dd>`).join('');
+const tb=document.querySelector('#rt tbody');
+function ref(){const q=document.getElementById('q').value.trim().toLowerCase();
+  tb.innerHTML=T.filter(r=>!q||r[1].toLowerCase().includes(q)||hx(r[0]).toLowerCase().includes(q.replace(/^0x/,''))||String(r[0])===q).map(r=>`<tr><td class="h">${hx(r[0])}</td><td>${r[0]}</td><td>${esc(r[1])}${r[5]?`<br><span class="small">${esc(r[5])}</span>`:''}</td><td>${esc(r[2])}</td><td>${esc(r[3])}</td><td>${r[4].split(' ').map(t=>`<span class="tag" title="${esc(SRC[t])}">${t}</span>`).join('')}</td></tr>`).join('')||'<tr><td colspan="6">No matching command.</td></tr>'}
+document.getElementById('q').addEventListener('input',ref);ref();
+
+let saved=null;try{saved=localStorage.getItem('swp08in');const vw=localStorage.getItem('swp08view');if(['auto','detailed','compact'].includes(vw)){view=vw;document.getElementById('vw-'+vw).checked=true}if(localStorage.getItem('swp08one')==='1'){one=true;document.getElementById('nb1').checked=true}}catch(e){}
+ta.value=saved||EX[10][1];render();
+}
+</script>
+</body>
+</html>
